@@ -15,14 +15,18 @@ use graflog::LogOption;
 mod extract_yaml;
 mod format_yaml_with_ollama;
 mod load_prompt;
+mod model_config;
 mod models;
 mod yaml_validator;
+
+use model_config::ModelConfigCache;
 
 struct AppState {
     template_path: String,
     reference_data_template_path: String,
     system_prompt_path: String,
     user_prompt_path: String,
+    model_cache: ModelConfigCache,
 }
 
 #[actix_web::main]
@@ -114,11 +118,15 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+    let store_url = std::env::var("STORE_URL").ok();
+    app_log!(info, "Store URL for model config: {:?}", store_url);
+
     let app_state = web::Data::new(AppState {
         template_path: template_file_path,
         reference_data_template_path,
         system_prompt_path,
         user_prompt_path,
+        model_cache: ModelConfigCache::new(store_url),
     });
 
     // Start HTTP server with dynamic port
@@ -189,13 +197,16 @@ async fn format_yaml_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
+    let model = app_state.model_cache.get_model().await;
+    app_log!(info, "Using Cohere model: {}", model);
+
     // Process the uploaded file
     match format_yaml_with_cohere(
-        // renamed function
         &input_file_path,
         &app_state.template_path,
         &app_state.system_prompt_path,
         &app_state.user_prompt_path,
+        &model,
     )
     .await
     {
@@ -253,12 +264,16 @@ async fn format_reference_data_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
+    let model = app_state.model_cache.get_model().await;
+    app_log!(info, "Using Cohere model: {}", model);
+
     // Process the uploaded file using the reference data template
     match format_yaml_with_cohere(
         &input_file_path,
         &app_state.reference_data_template_path,
         &app_state.system_prompt_path,
         &app_state.user_prompt_path,
+        &model,
     )
     .await
     {

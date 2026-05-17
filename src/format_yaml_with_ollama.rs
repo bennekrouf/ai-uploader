@@ -16,6 +16,7 @@ pub async fn format_yaml_with_cohere(
     template_file_path: &str,
     system_prompt_path: &str,
     user_prompt_path: &str,
+    model: &str,
 ) -> Result<String, Box<dyn Error>> {
     // Load environment variables
     dotenv::dotenv().ok();
@@ -35,7 +36,7 @@ pub async fn format_yaml_with_cohere(
     // Prepare Cohere request
     let client = Client::new();
     let request = CohereRequest {
-        model: "command-r7b-12-2024".to_string(), // or "command-r-08-2024"
+        model: model.to_string(),
         // model:     "command".to_string(), // or "command-nightly", "command-light"
         message: user_prompt,
         max_tokens: Some(4000),
