@@ -1,14 +1,13 @@
 use actix_multipart::{Field, Multipart};
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
 use anyhow::Result;
-use format_yaml_with_ollama::format_yaml_with_cohere;
+use format_yaml_with_ollama::{format_yaml_with_cohere, format_yaml_with_deepseek, format_yaml_with_claude};
 use futures_util::stream::StreamExt;
 use futures_util::TryStreamExt;
 use graflog::{app_log, init_logging};
 use std::env;
 use std::io::Write;
 use std::path::Path;
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 use graflog::LogOption;
 
@@ -197,34 +196,33 @@ async fn format_yaml_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
-    let model = app_state.model_cache.get_model().await;
-    app_log!(info, "Using Cohere model: {}", model);
+    let ai_config = app_state.model_cache.get_config().await;
+    app_log!(info, "Using provider={} model={}", ai_config.provider, ai_config.model);
 
-    // Process the uploaded file
-    match format_yaml_with_cohere(
-        &input_file_path,
-        &app_state.template_path,
-        &app_state.system_prompt_path,
-        &app_state.user_prompt_path,
-        &model,
-    )
-    .await
-    {
+    let result = match ai_config.provider.as_str() {
+        "deepseek" => format_yaml_with_deepseek(
+            &input_file_path, &app_state.template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+        "claude" => format_yaml_with_claude(
+            &input_file_path, &app_state.template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+        _ => format_yaml_with_cohere(
+            &input_file_path, &app_state.template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+    };
+
+    match result {
         Ok(formatted_yaml) => {
-            // Prepare the response
             app_log!(info, "Successfully formatted YAML");
-
-            // Create a temporary file for the response
-            let mut temp_file = NamedTempFile::new()?;
-            temp_file.write_all(formatted_yaml.as_bytes())?;
-            temp_file.flush()?;
-
-            // Clean up the input file
             if let Err(e) = std::fs::remove_file(&input_file_path) {
                 app_log!(error, "Failed to remove temporary input file: {}", e);
             }
-
-            // Return the formatted YAML
             Ok(HttpResponse::Ok()
                 .content_type("application/yaml")
                 .append_header((
@@ -264,29 +262,33 @@ async fn format_reference_data_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
-    let model = app_state.model_cache.get_model().await;
-    app_log!(info, "Using Cohere model: {}", model);
+    let ai_config = app_state.model_cache.get_config().await;
+    app_log!(info, "Using provider={} model={}", ai_config.provider, ai_config.model);
 
-    // Process the uploaded file using the reference data template
-    match format_yaml_with_cohere(
-        &input_file_path,
-        &app_state.reference_data_template_path,
-        &app_state.system_prompt_path,
-        &app_state.user_prompt_path,
-        &model,
-    )
-    .await
-    {
+    let result = match ai_config.provider.as_str() {
+        "deepseek" => format_yaml_with_deepseek(
+            &input_file_path, &app_state.reference_data_template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+        "claude" => format_yaml_with_claude(
+            &input_file_path, &app_state.reference_data_template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+        _ => format_yaml_with_cohere(
+            &input_file_path, &app_state.reference_data_template_path,
+            &app_state.system_prompt_path, &app_state.user_prompt_path,
+            &ai_config.model,
+        ).await,
+    };
+
+    match result {
         Ok(formatted_yaml) => {
-            // Prepare the response
             app_log!(info, "Successfully formatted reference data");
-
-            // Clean up the input file
             if let Err(e) = std::fs::remove_file(&input_file_path) {
                 app_log!(error, "Failed to remove temporary input file: {}", e);
             }
-
-            // Return the formatted YAML/JSON
             Ok(HttpResponse::Ok()
                 .content_type("application/json")
                 .append_header((
@@ -297,15 +299,9 @@ async fn format_reference_data_handler(
         }
         Err(e) => {
             app_log!(error, "Error formatting reference data: {}", e);
-            // Clean up the input file
             if let Err(cleanup_err) = std::fs::remove_file(&input_file_path) {
-                app_log!(
-                    error,
-                    "Failed to remove temporary input file: {}",
-                    cleanup_err
-                );
+                app_log!(error, "Failed to remove temporary input file: {}", cleanup_err);
             }
-
             Ok(HttpResponse::InternalServerError().body(format!("Error: {}", e)))
         }
     }
