@@ -80,7 +80,9 @@ impl ModelConfigCache {
         AiConfig {
             provider: std::env::var("AI_PROVIDER")
                 .unwrap_or_else(|_| DEFAULT_PROVIDER.to_string()),
-            model: std::env::var("COHERE_MODEL")
+            // AI_DEFAULT_MODEL is the canonical name; COHERE_MODEL kept for backward compat
+            model: std::env::var("AI_DEFAULT_MODEL")
+                .or_else(|_| std::env::var("COHERE_MODEL"))
                 .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
         }
     }
