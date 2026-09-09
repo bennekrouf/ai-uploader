@@ -135,6 +135,7 @@ async fn main() -> std::io::Result<()> {
             .route("/format-yaml", web::post().to(format_yaml_handler))
             .route("/format-reference-data", web::post().to(format_reference_data_handler))
             .route("/health", web::get().to(health_check))
+            .route("/providers", web::get().to(providers))
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()
@@ -143,6 +144,41 @@ async fn main() -> std::io::Result<()> {
 
 async fn health_check() -> HttpResponse {
     HttpResponse::Ok().body("Service is running")
+}
+
+/// Which providers this deployment can actually serve.
+///
+/// "Supported" and "usable" are different questions, and conflating them is why
+/// a super admin could select DeepSeek on the dashboard, be told it was saved,
+/// and have every upload fail with an error visible only in the logs — the
+/// provider list described what the binary can do, not what this machine has a
+/// key for.
+///
+/// Only this process can answer it: the keys are in its environment and nowhere
+/// else. Names of the variables are returned so a missing one can be named in
+/// the message; no key material is exposed.
+async fn providers() -> HttpResponse {
+    // (provider, env var). Kept next to the dispatch in format_yaml_handler so
+    // the two cannot drift apart unnoticed.
+    let known = [
+        ("cohere", "COHERE_API_KEY"),
+        ("deepseek", "DEEPSEEK_API_KEY"),
+        ("claude", "CLAUDE_API_KEY"),
+    ];
+
+    let providers: Vec<_> = known
+        .iter()
+        .map(|(name, var)| {
+            let configured = std::env::var(var).map(|v| !v.trim().is_empty()).unwrap_or(false);
+            serde_json::json!({
+                "provider": name,
+                "configured": configured,
+                "env_var": var,
+            })
+        })
+        .collect();
+
+    HttpResponse::Ok().json(serde_json::json!({ "providers": providers }))
 }
 
 async fn save_field(field: Field) -> Result<String, Error> {
