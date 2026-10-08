@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-const DEFAULT_PROVIDER: &str = "cohere";
-const DEFAULT_MODEL: &str = "command-r7b-12-2024";
+const DEFAULT_PROVIDER: &str = "deepseek";
+const DEFAULT_MODEL: &str = "deepseek-chat";
 const CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
@@ -80,9 +80,7 @@ impl ModelConfigCache {
         AiConfig {
             provider: std::env::var("AI_PROVIDER")
                 .unwrap_or_else(|_| DEFAULT_PROVIDER.to_string()),
-            // AI_DEFAULT_MODEL is the canonical name; COHERE_MODEL kept for backward compat
             model: std::env::var("AI_DEFAULT_MODEL")
-                .or_else(|_| std::env::var("COHERE_MODEL"))
                 .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
         }
     }

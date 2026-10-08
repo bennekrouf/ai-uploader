@@ -7,7 +7,6 @@ module.exports = {
         env: {
             NODE_ENV: "production",
             AI_UPLOADER_PORT: 6001,
-            COHERE_API_KEY: "yTic1IyNddYd99KdwScBibnOEhtTzCb2Goy2wVfp",
             LOG_PATH_API0: "/var/log/api0.log",
             RUST_LOG: "debug"
         },

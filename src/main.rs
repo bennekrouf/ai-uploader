@@ -1,7 +1,7 @@
 use actix_multipart::{Field, Multipart};
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
 use anyhow::Result;
-use format_yaml_with_ollama::{format_yaml_with_cohere, format_yaml_with_deepseek, format_yaml_with_claude};
+use format_yaml_with_ollama::format_yaml;
 use futures_util::stream::StreamExt;
 use futures_util::TryStreamExt;
 use graflog::{app_log, init_logging};
@@ -158,27 +158,61 @@ async fn health_check() -> HttpResponse {
 /// else. Names of the variables are returned so a missing one can be named in
 /// the message; no key material is exposed.
 async fn providers() -> HttpResponse {
-    // (provider, env var). Kept next to the dispatch in format_yaml_handler so
-    // the two cannot drift apart unnoticed.
-    let known = [
-        ("cohere", "COHERE_API_KEY"),
-        ("deepseek", "DEEPSEEK_API_KEY"),
-        ("claude", "CLAUDE_API_KEY"),
-    ];
-
-    let providers: Vec<_> = known
+    // The same table the dispatch in format_yaml_handler uses, so the two
+    // cannot drift apart.
+    let providers: Vec<_> = format_yaml_with_ollama::PROVIDERS
         .iter()
-        .map(|(name, var)| {
-            let configured = std::env::var(var).map(|v| !v.trim().is_empty()).unwrap_or(false);
+        .map(|p| {
+            let configured = std::env::var(p.key_var).map(|v| !v.trim().is_empty()).unwrap_or(false);
             serde_json::json!({
-                "provider": name,
+                "provider": p.id,
                 "configured": configured,
-                "env_var": var,
+                "env_var": p.key_var,
             })
         })
         .collect();
 
     HttpResponse::Ok().json(serde_json::json!({ "providers": providers }))
+}
+
+/// The provider, model and key the store sent with the file — what the super
+/// admin chose in the dashboard. The key may be absent when none was set
+/// there; the provider's key in this process's environment is used instead.
+struct Chosen {
+    config: model_config::AiConfig,
+    api_key: Option<String>,
+}
+
+async fn read_text(mut field: Field) -> Result<String, Error> {
+    let mut bytes = web::BytesMut::new();
+    while let Some(chunk) = field.next().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+}
+
+/// The uploaded file, saved to a temporary path, and the store's choice of
+/// provider if it sent one. A store from before the dashboard setting sends
+/// only the file.
+async fn read_upload(mut multipart: Multipart) -> Result<(Option<String>, Option<Chosen>), Error> {
+    let (mut provider, mut model, mut api_key, mut input_path) = (None, None, None, None);
+    while let Some(field) = multipart.try_next().await? {
+        match field.name() {
+            Some("provider") => provider = Some(read_text(field).await?),
+            Some("model") => model = Some(read_text(field).await?),
+            Some("api_key") => api_key = Some(read_text(field).await?).filter(|k| !k.is_empty()),
+            Some("file") => {
+                input_path = Some(save_field(field).await?);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let chosen = provider.zip(model).map(|(provider, model)| Chosen {
+        config: model_config::AiConfig { provider, model },
+        api_key,
+    });
+    Ok((input_path, chosen))
 }
 
 async fn save_field(field: Field) -> Result<String, Error> {
@@ -212,18 +246,8 @@ async fn format_yaml_handler(
     multipart: Multipart,
     app_state: web::Data<AppState>,
 ) -> Result<HttpResponse, Error> {
-    let mut input_path = None;
-
-    // Process the multipart form data
-    let mut multipart_data = multipart;
-
     app_log!(info, "Processing uploaded file");
-    'field_loop: while let Ok(Some(field)) = multipart_data.try_next().await {
-        if field.name() == Some("file") {
-            input_path = Some(save_field(field).await?);
-            break 'field_loop;
-        }
-    }
+    let (input_path, chosen) = read_upload(multipart).await?;
 
     let input_file_path = input_path.ok_or_else(|| {
         app_log!(error, "No file was uploaded");
@@ -232,26 +256,21 @@ async fn format_yaml_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
-    let ai_config = app_state.model_cache.get_config().await;
-    app_log!(info, "Using provider={} model={}", ai_config.provider, ai_config.model);
-
-    let result = match ai_config.provider.as_str() {
-        "deepseek" => format_yaml_with_deepseek(
-            &input_file_path, &app_state.template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
-        "claude" => format_yaml_with_claude(
-            &input_file_path, &app_state.template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
-        _ => format_yaml_with_cohere(
-            &input_file_path, &app_state.template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
+    let ai_config = match &chosen {
+        Some(c) => c.config.clone(),
+        None => app_state.model_cache.get_config().await,
     };
+    let api_key = chosen.and_then(|c| c.api_key);
+    app_log!(info, "Using provider={} model={} key_from={}", ai_config.provider, ai_config.model,
+        if api_key.is_some() { "store" } else { "environment" });
+
+    let result = format_yaml(
+        format_yaml_with_ollama::provider(&ai_config.provider),
+        &input_file_path, &app_state.template_path,
+        &app_state.system_prompt_path, &app_state.user_prompt_path,
+        &ai_config.model,
+        api_key.as_deref(),
+    ).await;
 
     match result {
         Ok(formatted_yaml) => {
@@ -278,18 +297,8 @@ async fn format_reference_data_handler(
     multipart: Multipart,
     app_state: web::Data<AppState>,
 ) -> Result<HttpResponse, Error> {
-    let mut input_path = None;
-
-    // Process the multipart form data
-    let mut multipart_data = multipart;
-
     app_log!(info, "Processing uploaded reference data file");
-    'field_loop: while let Ok(Some(field)) = multipart_data.try_next().await {
-        if field.name() == Some("file") {
-            input_path = Some(save_field(field).await?);
-            break 'field_loop;
-        }
-    }
+    let (input_path, chosen) = read_upload(multipart).await?;
 
     let input_file_path = input_path.ok_or_else(|| {
         app_log!(error, "No file was uploaded");
@@ -298,26 +307,21 @@ async fn format_reference_data_handler(
 
     app_log!(info, "Processing file: {}", input_file_path);
 
-    let ai_config = app_state.model_cache.get_config().await;
-    app_log!(info, "Using provider={} model={}", ai_config.provider, ai_config.model);
-
-    let result = match ai_config.provider.as_str() {
-        "deepseek" => format_yaml_with_deepseek(
-            &input_file_path, &app_state.reference_data_template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
-        "claude" => format_yaml_with_claude(
-            &input_file_path, &app_state.reference_data_template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
-        _ => format_yaml_with_cohere(
-            &input_file_path, &app_state.reference_data_template_path,
-            &app_state.system_prompt_path, &app_state.user_prompt_path,
-            &ai_config.model,
-        ).await,
+    let ai_config = match &chosen {
+        Some(c) => c.config.clone(),
+        None => app_state.model_cache.get_config().await,
     };
+    let api_key = chosen.and_then(|c| c.api_key);
+    app_log!(info, "Using provider={} model={} key_from={}", ai_config.provider, ai_config.model,
+        if api_key.is_some() { "store" } else { "environment" });
+
+    let result = format_yaml(
+        format_yaml_with_ollama::provider(&ai_config.provider),
+        &input_file_path, &app_state.reference_data_template_path,
+        &app_state.system_prompt_path, &app_state.user_prompt_path,
+        &ai_config.model,
+        api_key.as_deref(),
+    ).await;
 
     match result {
         Ok(formatted_yaml) => {
