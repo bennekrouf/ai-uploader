@@ -11,7 +11,8 @@ DETAILED REQUIREMENTS:
    - path (URL path)
    - parameters (all parameters with their properties)
 5. For parameters, preserve:
-   - name
+   - name, copied character for character — never rename, strip or "clean up" it
+     (`$filter`, `$top`, `page[size]`, `api-version` must come out exactly so)
    - description
    - required flag
    - alternatives array
