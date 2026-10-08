@@ -1,11 +1,11 @@
 # YAML Formatter HTTP Service
 
-A simple HTTP service that takes a YAML file as input and returns a formatted YAML file as output, following a specific template structure using Cohere's AI API.
+A simple HTTP service that takes a YAML file as input and returns a formatted YAML file as output, following a specific template structure using DeepSeek (default) or Mistral.
 
 ## Features
 
 - HTTP endpoint for file uploads
-- Formats YAML using Cohere API
+- Formats YAML using DeepSeek or Mistral (chosen in Admin → AI model)
 - Returns formatted YAML file
 - Basic error handling and logging
 - Environment variable configuration for API keys
@@ -13,7 +13,7 @@ A simple HTTP service that takes a YAML file as input and returns a formatted YA
 ## Requirements
 
 - Rust 1.75+
-- Cohere API key
+- Provider API keys are set in the dashboard by the super admin
 
 ## Setup
 
@@ -22,7 +22,8 @@ A simple HTTP service that takes a YAML file as input and returns a formatted YA
 Create a `.env` file in the project root:
 
 ```env
-COHERE_API_KEY=your_cohere_api_key_here
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+MISTRAL_API_KEY=your_mistral_api_key_here
 ```
 
 ### 2. Required Template Files
@@ -30,8 +31,8 @@ COHERE_API_KEY=your_cohere_api_key_here
 Ensure you have the required template files:
 
 - `template.yaml` - The template structure for formatting
-- `prompt/system_prompt.txt` - System prompt for Cohere
-- `prompt/user_prompt.txt` - User prompt for Cohere
+- `prompt/system_prompt.txt` - System prompt
+- `prompt/user_prompt.txt` - User prompt
 
 ### 3. Build and Run
 
@@ -109,5 +110,6 @@ api_groups:
 
 ## Environment Variables
 
-- `COHERE_API_KEY` - Required: Your Cohere API key
+- `DEEPSEEK_API_KEY` - Optional fallback: keys are normally set in the dashboard (Admin → Platform) and sent by the store
+- `MISTRAL_API_KEY` - Optional fallback, as above
 - `RUST_LOG` - Optional: Set logging level (debug, info, warn, error)
