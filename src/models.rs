@@ -19,6 +19,17 @@ pub struct ChatMessage {
 #[derive(Deserialize, Debug)]
 pub struct ChatResponse {
     pub choices: Vec<ChatChoice>,
+    #[serde(default)]
+    pub usage: Option<ChatUsage>,
+}
+
+/// The tokens a completion spent, as the provider counts them.
+#[derive(Deserialize, Debug, Clone, Copy, Default)]
+pub struct ChatUsage {
+    #[serde(default)]
+    pub prompt_tokens: i64,
+    #[serde(default)]
+    pub completion_tokens: i64,
 }
 
 #[derive(Deserialize, Debug)]

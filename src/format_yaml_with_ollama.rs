@@ -7,7 +7,7 @@ use std::fs;
 use crate::{
     extract_yaml::extract_yaml,
     load_prompt::load_prompt,
-    models::{ChatMessage, ChatRequest, ChatResponse},
+    models::{ChatMessage, ChatRequest, ChatResponse, ChatUsage},
     yaml_validator,
 };
 
@@ -42,6 +42,26 @@ pub fn provider(id: &str) -> &'static Provider {
     PROVIDERS.iter().find(|p| p.id == id).unwrap_or(&PROVIDERS[0])
 }
 
+/// The formatted text and what the call spent; `usage` is None when the
+/// provider left it out.
+pub struct Formatted {
+    pub text: String,
+    pub usage: Option<ChatUsage>,
+}
+
+impl Formatted {
+    /// The call's model and tokens as response headers, so the store can put
+    /// the call on the platform's LLM ledger without the body changing shape.
+    pub fn usage_headers(&self, provider: &Provider, model: &str) -> Vec<(&'static str, String)> {
+        let mut headers = vec![("X-LLM-Provider", provider.id.to_string()), ("X-LLM-Model", model.to_string())];
+        if let Some(u) = self.usage {
+            headers.push(("X-LLM-Input-Tokens", u.prompt_tokens.to_string()));
+            headers.push(("X-LLM-Output-Tokens", u.completion_tokens.to_string()));
+        }
+        headers
+    }
+}
+
 pub async fn format_yaml(
     provider: &Provider,
     input_file_path: &str,
@@ -50,7 +70,7 @@ pub async fn format_yaml(
     user_prompt_path: &str,
     model: &str,
     api_key: Option<&str>,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<Formatted, Box<dyn Error>> {
     // The key set in the dashboard, sent by the store; this process's
     // environment only when none was set there.
     dotenv::dotenv().ok();
@@ -103,7 +123,7 @@ pub async fn format_yaml(
 
     let yaml_content = extract_yaml(&text);
     let fixed_yaml = yaml_validator::validate_and_fix_yaml(&yaml_content)?;
-    Ok(fixed_yaml)
+    Ok(Formatted { text: fixed_yaml, usage: chat_response.usage })
 }
 
 fn build_prompts(
