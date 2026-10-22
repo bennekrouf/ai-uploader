@@ -273,18 +273,20 @@ async fn format_yaml_handler(
     ).await;
 
     match result {
-        Ok(formatted_yaml) => {
+        Ok(formatted) => {
             app_log!(info, "Successfully formatted YAML");
             if let Err(e) = std::fs::remove_file(&input_file_path) {
                 app_log!(error, "Failed to remove temporary input file: {}", e);
             }
-            Ok(HttpResponse::Ok()
-                .content_type("application/yaml")
-                .append_header((
-                    "Content-Disposition",
-                    "attachment; filename=\"formatted_output.yaml\"",
-                ))
-                .body(formatted_yaml))
+            let mut reply = HttpResponse::Ok();
+            reply.content_type("application/yaml").append_header((
+                "Content-Disposition",
+                "attachment; filename=\"formatted_output.yaml\"",
+            ));
+            for header in formatted.usage_headers(format_yaml_with_ollama::provider(&ai_config.provider), &ai_config.model) {
+                reply.append_header(header);
+            }
+            Ok(reply.body(formatted.text))
         }
         Err(e) => {
             app_log!(error, "Error formatting YAML: {}", e);
@@ -324,18 +326,20 @@ async fn format_reference_data_handler(
     ).await;
 
     match result {
-        Ok(formatted_yaml) => {
+        Ok(formatted) => {
             app_log!(info, "Successfully formatted reference data");
             if let Err(e) = std::fs::remove_file(&input_file_path) {
                 app_log!(error, "Failed to remove temporary input file: {}", e);
             }
-            Ok(HttpResponse::Ok()
-                .content_type("application/json")
-                .append_header((
-                    "Content-Disposition",
-                    "attachment; filename=\"reference_data.json\"",
-                ))
-                .body(formatted_yaml))
+            let mut reply = HttpResponse::Ok();
+            reply.content_type("application/json").append_header((
+                "Content-Disposition",
+                "attachment; filename=\"reference_data.json\"",
+            ));
+            for header in formatted.usage_headers(format_yaml_with_ollama::provider(&ai_config.provider), &ai_config.model) {
+                reply.append_header(header);
+            }
+            Ok(reply.body(formatted.text))
         }
         Err(e) => {
             app_log!(error, "Error formatting reference data: {}", e);
