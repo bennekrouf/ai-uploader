@@ -181,6 +181,8 @@ async fn providers() -> HttpResponse {
 struct Chosen {
     config: model_config::AiConfig,
     api_key: Option<String>,
+    /// The provider's chat-completions URL; absent from an older store.
+    chat_url: Option<String>,
 }
 
 async fn read_text(mut field: Field) -> Result<String, Error> {
@@ -195,12 +197,13 @@ async fn read_text(mut field: Field) -> Result<String, Error> {
 /// provider if it sent one. A store from before the dashboard setting sends
 /// only the file.
 async fn read_upload(mut multipart: Multipart) -> Result<(Option<String>, Option<Chosen>), Error> {
-    let (mut provider, mut model, mut api_key, mut input_path) = (None, None, None, None);
+    let (mut provider, mut model, mut api_key, mut chat_url, mut input_path) = (None, None, None, None, None);
     while let Some(field) = multipart.try_next().await? {
         match field.name() {
             Some("provider") => provider = Some(read_text(field).await?),
             Some("model") => model = Some(read_text(field).await?),
             Some("api_key") => api_key = Some(read_text(field).await?).filter(|k| !k.is_empty()),
+            Some("chat_url") => chat_url = Some(read_text(field).await?).filter(|u| !u.is_empty()),
             Some("file") => {
                 input_path = Some(save_field(field).await?);
                 break;
@@ -211,6 +214,7 @@ async fn read_upload(mut multipart: Multipart) -> Result<(Option<String>, Option
     let chosen = provider.zip(model).map(|(provider, model)| Chosen {
         config: model_config::AiConfig { provider, model },
         api_key,
+        chat_url,
     });
     Ok((input_path, chosen))
 }
@@ -260,12 +264,16 @@ async fn format_yaml_handler(
         Some(c) => c.config.clone(),
         None => app_state.model_cache.get_config().await,
     };
+    let target = format_yaml_with_ollama::upstream(
+        &ai_config.provider,
+        chosen.as_ref().and_then(|c| c.chat_url.as_deref()),
+    );
     let api_key = chosen.and_then(|c| c.api_key);
     app_log!(info, "Using provider={} model={} key_from={}", ai_config.provider, ai_config.model,
         if api_key.is_some() { "store" } else { "environment" });
 
     let result = format_yaml(
-        format_yaml_with_ollama::provider(&ai_config.provider),
+        &target,
         &input_file_path, &app_state.template_path,
         &app_state.system_prompt_path, &app_state.user_prompt_path,
         &ai_config.model,
@@ -283,7 +291,7 @@ async fn format_yaml_handler(
                 "Content-Disposition",
                 "attachment; filename=\"formatted_output.yaml\"",
             ));
-            for header in formatted.usage_headers(format_yaml_with_ollama::provider(&ai_config.provider), &ai_config.model) {
+            for header in formatted.usage_headers(&target, &ai_config.model) {
                 reply.append_header(header);
             }
             Ok(reply.body(formatted.text))
@@ -313,12 +321,16 @@ async fn format_reference_data_handler(
         Some(c) => c.config.clone(),
         None => app_state.model_cache.get_config().await,
     };
+    let target = format_yaml_with_ollama::upstream(
+        &ai_config.provider,
+        chosen.as_ref().and_then(|c| c.chat_url.as_deref()),
+    );
     let api_key = chosen.and_then(|c| c.api_key);
     app_log!(info, "Using provider={} model={} key_from={}", ai_config.provider, ai_config.model,
         if api_key.is_some() { "store" } else { "environment" });
 
     let result = format_yaml(
-        format_yaml_with_ollama::provider(&ai_config.provider),
+        &target,
         &input_file_path, &app_state.reference_data_template_path,
         &app_state.system_prompt_path, &app_state.user_prompt_path,
         &ai_config.model,
@@ -336,7 +348,7 @@ async fn format_reference_data_handler(
                 "Content-Disposition",
                 "attachment; filename=\"reference_data.json\"",
             ));
-            for header in formatted.usage_headers(format_yaml_with_ollama::provider(&ai_config.provider), &ai_config.model) {
+            for header in formatted.usage_headers(&target, &ai_config.model) {
                 reply.append_header(header);
             }
             Ok(reply.body(formatted.text))
